@@ -1,0 +1,26 @@
+# deps + build
+node_modules
+dist
+dist-zip/
+*.tsbuildinfo
+CLAUDE.md
+# env
+.env
+.env.local
+.env.*.local
+
+# logs + caches
+*.log
+.vite
+.cache
+.eslintcache
+
+# editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
