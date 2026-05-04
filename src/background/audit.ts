@@ -1,5 +1,5 @@
 import type { AuditFinding, AuditReport, Lead, Settings } from '../shared/types';
-import { requestHostPermissions } from './probe';
+import { hasHostPermissions } from './probe';
 
 interface RunOpts {
   lead: Lead;
@@ -25,9 +25,16 @@ export async function runAudit({ lead, settings }: RunOpts): Promise<AuditReport
     return baseReport(id, lead.id, url, startedAt, false, 'non-http url');
   }
 
-  const granted = await requestHostPermissions([parsed.origin]);
+  const granted = await hasHostPermissions([parsed.origin]);
   if (!granted) {
-    return baseReport(id, lead.id, url, startedAt, false, 'host permission denied');
+    return baseReport(
+      id,
+      lead.id,
+      url,
+      startedAt,
+      false,
+      `host permission missing for ${parsed.origin} — grant it from the popup before running audit`
+    );
   }
 
   const findings: AuditFinding[] = [];

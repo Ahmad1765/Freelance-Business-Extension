@@ -77,3 +77,23 @@ export async function requestHostPermissions(origins: string[]): Promise<boolean
   if (!patterns.length) return true;
   return chrome.permissions.request({ origins: patterns });
 }
+
+// Service-worker-safe variant: only checks; never prompts.
+// chrome.permissions.request() requires a user gesture in an extension UI
+// surface and silently fails from the background SW, so audit code must use
+// this and rely on the popup to have already requested the permission.
+export async function hasHostPermissions(origins: string[]): Promise<boolean> {
+  const patterns = origins.map((o) => {
+    try {
+      return new URL(o).origin + '/*';
+    } catch {
+      return null;
+    }
+  }).filter((p): p is string => !!p);
+  if (!patterns.length) return true;
+  try {
+    return await chrome.permissions.contains({ origins: patterns });
+  } catch {
+    return false;
+  }
+}

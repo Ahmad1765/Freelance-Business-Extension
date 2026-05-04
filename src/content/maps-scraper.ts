@@ -55,13 +55,22 @@ async function start(cfg: Cfg) {
 
   const baseDelay = speedToBaseDelay(cfg.speed);
   const STALL_BAIL = 12;
+  const PENDING_WAIT_MAX = 6;
   let stall = 0;
   let lastFoundCount = 0;
 
   while (running && seen.size < cfg.maxResults) {
-    const harvested = await harvestVisible(feed);
+    let harvested = await harvestVisible(feed);
+    let pendingWaits = 0;
+    while (running && harvested.pending > 0 && pendingWaits < PENDING_WAIT_MAX) {
+      // Skeleton cards visible — let them render before we scroll past them.
+      await sleep(jitter(baseDelay * 0.6, 0.3));
+      harvested = await harvestVisible(feed);
+      pendingWaits += 1;
+    }
+
     const fresh: Lead[] = [];
-    for (const l of harvested) {
+    for (const l of harvested.leads) {
       if (!seen.has(l.id)) {
         seen.add(l.id);
         fresh.push(l);
@@ -79,7 +88,9 @@ async function start(cfg: Cfg) {
     await sleep(jitter(baseDelay, 0.4));
     const grewByHeight = feed.scrollHeight > beforeHeight;
 
-    if (grewByLeads || grewByHeight) {
+    // Only treat lead growth as real progress. Height growth alone is often
+    // skeleton placeholders that never resolve and would mask a true stall.
+    if (grewByLeads) {
       stall = 0;
     } else {
       stall += 1;
@@ -89,6 +100,7 @@ async function start(cfg: Cfg) {
         await sleep(jitter(baseDelay * 1.5, 0.3));
       }
       if (stall >= STALL_BAIL && isAtEndOfResults(feed)) break;
+      if (stall >= STALL_BAIL && !grewByHeight) break;
       if (stall >= STALL_BAIL * 2) break;
     }
   }
@@ -105,8 +117,9 @@ function isAtEndOfResults(feed: HTMLElement): boolean {
   return false;
 }
 
-async function harvestVisible(feed: HTMLElement): Promise<Lead[]> {
+async function harvestVisible(feed: HTMLElement): Promise<{ leads: Lead[]; pending: number }> {
   const out: Lead[] = [];
+  let pending = 0;
 
   let cards: HTMLElement[] = [];
   for (const sel of CARD_SELECTORS) {
@@ -116,16 +129,24 @@ async function harvestVisible(feed: HTMLElement): Promise<Lead[]> {
   if (!cards.length) cards = Array.from(feed.querySelectorAll<HTMLElement>('div[jsaction]'));
 
   for (const card of cards) {
+    if (!isLikelyResultCard(card)) continue;
+
     const link = card.matches(PLACE_LINK)
       ? (card as HTMLAnchorElement)
       : card.querySelector<HTMLAnchorElement>(PLACE_LINK);
-    if (!link?.href) continue;
+    if (!link?.href) {
+      pending += 1;
+      continue;
+    }
     const placeUrl = link.href;
 
     const name =
       pickName(card, link) ??
       '';
-    if (!name) continue;
+    if (!name) {
+      pending += 1;
+      continue;
+    }
 
     const id = await sha1Hex(placeUrl);
 
@@ -155,7 +176,15 @@ async function harvestVisible(feed: HTMLElement): Promise<Lead[]> {
       source: 'maps-scrape',
     });
   }
-  return out;
+  return { leads: out, pending };
+}
+
+// A real result card has visible dimensions. Skeletons + the "Loading…" /
+// end-of-list footers render with zero height; treat them as not-yet-cards
+// so they don't inflate the pending count or trigger false stalls.
+function isLikelyResultCard(card: HTMLElement): boolean {
+  const rect = card.getBoundingClientRect();
+  return rect.height > 20 && rect.width > 20;
 }
 
 function pickName(card: HTMLElement, link: HTMLAnchorElement): string | null {

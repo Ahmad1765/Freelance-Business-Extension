@@ -180,6 +180,25 @@ export const useApp = create<State>((set, get) => ({
   audits: [],
   refreshAudits: async () => set({ audits: (await send('AUDIT_LIST')).reports }),
   runAudit: async (leadId, force) => {
+    // chrome.permissions.request() must run in a user-gesture context from a
+    // UI surface; the SW cannot prompt. Do it here, then dispatch AUDIT_RUN.
+    const lead = get().leads.find((l) => l.id === leadId);
+    if (lead?.website) {
+      try {
+        const origin = new URL(lead.website).origin;
+        const pattern = `${origin}/*`;
+        const has = await chrome.permissions.contains({ origins: [pattern] });
+        if (!has) {
+          const granted = await chrome.permissions.request({ origins: [pattern] });
+          if (!granted) {
+            console.warn('audit: host permission denied for', pattern);
+            return undefined;
+          }
+        }
+      } catch (e) {
+        console.warn('audit: permission preflight failed', e);
+      }
+    }
     const r = await send('AUDIT_RUN', { leadId, force });
     void get().refreshAudits();
     if (!r.ok) console.warn('audit failed', r.error);
