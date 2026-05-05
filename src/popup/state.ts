@@ -180,29 +180,51 @@ export const useApp = create<State>((set, get) => ({
   audits: [],
   refreshAudits: async () => set({ audits: (await send('AUDIT_LIST')).reports }),
   runAudit: async (leadId, force) => {
-    // chrome.permissions.request() must run in a user-gesture context from a
-    // UI surface; the SW cannot prompt. Do it here, then dispatch AUDIT_RUN.
+    // chrome.permissions.request() must fire as the first await of the click
+    // handler — any prior await (including permissions.contains) consumes the
+    // user-gesture token and Chrome throws "must be called during a user
+    // gesture". permissions.request is a no-op prompt when already granted.
     const lead = get().leads.find((l) => l.id === leadId);
-    if (lead?.website) {
-      try {
-        const origin = new URL(lead.website).origin;
-        const pattern = `${origin}/*`;
-        const has = await chrome.permissions.contains({ origins: [pattern] });
-        if (!has) {
-          const granted = await chrome.permissions.request({ origins: [pattern] });
-          if (!granted) {
-            console.warn('audit: host permission denied for', pattern);
-            return undefined;
-          }
-        }
-      } catch (e) {
-        console.warn('audit: permission preflight failed', e);
-      }
+    const url = lead?.website ?? '';
+    if (!lead) return failedAudit(leadId, url, 'lead not found');
+    if (!url) return failedAudit(leadId, url, 'lead has no website to audit');
+    let patterns: string[];
+    try {
+      patterns = auditPermissionPatterns(url);
+    } catch {
+      return failedAudit(leadId, url, `invalid website URL: ${url}`);
     }
-    const r = await send('AUDIT_RUN', { leadId, force });
+    try {
+      const granted = await chrome.permissions.request({ origins: patterns });
+      if (!granted) {
+        console.warn('audit: host permission denied for', patterns);
+        return failedAudit(
+          leadId,
+          url,
+          `host permission denied. Click "Audit" again and allow access for ${patterns.join(', ')} in the Chrome prompt.`
+        );
+      }
+    } catch (e) {
+      console.warn('audit: permission preflight failed', e);
+      return failedAudit(
+        leadId,
+        url,
+        `permission request failed: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    let r;
+    try {
+      r = await send('AUDIT_RUN', { leadId, force });
+    } catch (e) {
+      return failedAudit(
+        leadId,
+        url,
+        `background message failed: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
     void get().refreshAudits();
     if (!r.ok) console.warn('audit failed', r.error);
-    return r.report;
+    return r.report ?? failedAudit(leadId, url, r.error ?? 'audit returned no report');
   },
 
   outreach: [],
@@ -283,4 +305,37 @@ async function hydrateForTab(tab: Tab, get: () => State) {
     void s.refreshGmail();
     void s.refreshTemplates();
   }
+}
+
+function failedAudit(leadId: string, url: string, error: string): AuditReport {
+  return {
+    id: '',
+    leadId,
+    url,
+    ranAt: Date.now(),
+    durationMs: 0,
+    ok: false,
+    error,
+    findings: [],
+    stats: { linksChecked: 0, linksBroken: 0, pageBytes: 0, requests: 0, loadMs: 0 },
+  };
+}
+
+// Generate Chrome match patterns covering both http+https and www↔apex variants
+// of the lead's site. Sites commonly redirect http://www. → https://apex (or
+// the inverse), and Chrome's fetch API requires permission for every origin
+// in the redirect chain — granting only the entry origin makes the audit fail
+// with a generic "Failed to fetch" once the redirect crosses to a sibling host.
+export function auditPermissionPatterns(rawUrl: string): string[] {
+  const u = new URL(rawUrl);
+  const host = u.hostname.toLowerCase();
+  const hosts = new Set<string>([host]);
+  if (host.startsWith('www.')) hosts.add(host.slice(4));
+  else hosts.add(`www.${host}`);
+  const out = new Set<string>();
+  for (const h of hosts) {
+    out.add(`http://${h}/*`);
+    out.add(`https://${h}/*`);
+  }
+  return Array.from(out);
 }

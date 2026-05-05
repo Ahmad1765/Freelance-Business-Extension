@@ -158,7 +158,12 @@ async function harvestVisible(feed: HTMLElement): Promise<{ leads: Lead[]; pendi
       card.querySelector<HTMLAnchorElement>('a[data-value="Website" i]') ||
       card.querySelector<HTMLAnchorElement>('a[aria-label*="Website" i]') ||
       card.querySelector<HTMLAnchorElement>('a[data-tooltip*="website" i]');
-    const website = websiteEl?.href || null;
+    const rawWebsite = websiteEl?.href || null;
+    // Google wraps sponsored-result website clicks in aclk/adclick redirectors.
+    // The destination isn't querystring-extractable when adurl= is empty, and
+    // fetching google.com/aclk causes CORS errors for the redirected response.
+    // Store null so the audit doesn't attempt it; user can paste the real URL.
+    const website = rawWebsite && isGoogleRedirector(rawWebsite) ? null : rawWebsite;
 
     out.push({
       id,
@@ -185,6 +190,15 @@ async function harvestVisible(feed: HTMLElement): Promise<{ leads: Lead[]; pendi
 function isLikelyResultCard(card: HTMLElement): boolean {
   const rect = card.getBoundingClientRect();
   return rect.height > 20 && rect.width > 20;
+}
+
+// Google wraps sponsored-result website buttons in click-tracking redirectors.
+// The actual destination is not reliably encoded in the URL params (adurl= is
+// often empty), and fetching the redirector from an extension context causes a
+// CORS error on the redirected response. Detect these so callers can discard.
+const GOOGLE_REDIRECTORS = /^https?:\/\/(www\.)?google\.(com|[a-z]{2})\/(aclk|url|adurl)\b/;
+function isGoogleRedirector(url: string): boolean {
+  return GOOGLE_REDIRECTORS.test(url);
 }
 
 function pickName(card: HTMLElement, link: HTMLAnchorElement): string | null {

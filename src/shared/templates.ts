@@ -1,4 +1,4 @@
-import type { Lead, Settings, Template } from './types';
+import type { AuditReport, Lead, Settings, Template } from './types';
 
 const TOKEN = /\{\{\s*([A-Z][A-Z0-9_]*)\s*\}\}/g;
 
@@ -11,9 +11,20 @@ export interface RenderVars extends Record<string, string> {
   SENDER_EMAIL: string;
   SENDER_ADDRESS: string;
   OPTOUT_LINK: string;
+  AUDIT_SCORE: string;
+  AUDIT_TOP_ISSUE: string;
+  AUDIT_TOP_3: string;
+  AUDIT_TOP_3_HTML: string;
+  AUDIT_URL: string;
 }
 
-export function buildVars(lead: Lead, settings: Settings, optOutLink?: string): RenderVars {
+export function buildVars(
+  lead: Lead,
+  settings: Settings,
+  optOutLink?: string,
+  audit?: AuditReport | null
+): RenderVars {
+  const top = audit?.summary && audit.summary.length ? audit.summary : [];
   return {
     BUSINESS_NAME: lead.name || 'there',
     BUSINESS_ADDRESS: lead.address || '',
@@ -23,7 +34,23 @@ export function buildVars(lead: Lead, settings: Settings, optOutLink?: string): 
     SENDER_EMAIL: settings.senderEmail,
     SENDER_ADDRESS: settings.senderAddress,
     OPTOUT_LINK: optOutLink || settings.defaultOptOutBaseUrl,
+    AUDIT_SCORE: typeof audit?.score === 'number' ? `${audit.score}/100` : '',
+    AUDIT_TOP_ISSUE: top[0] ?? '',
+    AUDIT_TOP_3: top.length ? top.map((t) => `- ${t}`).join('\n') : '',
+    AUDIT_TOP_3_HTML: top.length
+      ? `<ul>${top.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}</ul>`
+      : '',
+    AUDIT_URL: audit?.url || lead.website || '',
   };
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export class TemplateValidationError extends Error {}

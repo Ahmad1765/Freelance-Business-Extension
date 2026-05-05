@@ -63,19 +63,35 @@ function AuditRow({
     { critical: 0, warning: 0, suggestion: 0 } as Record<string, number>
   );
 
+  const score = audit.score ?? null;
+  const summary = audit.summary ?? [];
+
   return (
     <div>
       <button
         onClick={onToggle}
         className="w-full text-left p-3 hover:bg-panel/60 flex items-start gap-3"
       >
+        {score !== null && audit.ok && (
+          <div
+            className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold border ${scoreClass(score)}`}
+            title="Audit score (0-100)"
+          >
+            {score}
+          </div>
+        )}
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium truncate">{audit.url}</div>
-          <div className="text-xs text-muted">
+          {audit.ok && summary.length > 0 && (
+            <div className="text-xs text-text/80 mt-0.5 truncate">
+              Top issue: {summary[0]}
+            </div>
+          )}
+          <div className="text-xs text-muted mt-0.5">
             {new Date(audit.ranAt).toLocaleString()} · {audit.durationMs}ms · {audit.stats.linksChecked} links checked
           </div>
         </div>
-        <div className="flex gap-1 text-xs">
+        <div className="flex flex-col items-end gap-1 text-xs">
           {counts.critical > 0 && (
             <span className="px-1.5 rounded bg-bad/20 text-bad border border-bad/40">
               {counts.critical} crit
@@ -96,8 +112,18 @@ function AuditRow({
       {open && (
         <div className="px-3 pb-3 space-y-2">
           {!audit.ok && (
-            <div className="text-xs text-bad bg-bad/10 border border-bad/30 rounded p-2">
+            <div className="text-xs text-bad bg-bad/10 border border-bad/30 rounded p-2 whitespace-pre-wrap">
               Audit error: {audit.error}
+            </div>
+          )}
+          {audit.ok && summary.length > 0 && (
+            <div className="text-xs bg-panel border border-line rounded p-2">
+              <div className="font-medium text-text mb-1">What to tell the owner</div>
+              <ul className="list-disc pl-4 space-y-0.5 text-text/90">
+                {summary.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
             </div>
           )}
           {audit.findings.length === 0 && audit.ok && (
@@ -113,10 +139,17 @@ function AuditRow({
               <div className="flex items-center gap-2 mb-1">
                 <span className="uppercase tracking-wider opacity-70 text-[10px]">
                   {f.category} · {f.severity}
+                  {f.impact ? ` · ${f.impact}` : ''}
                 </span>
               </div>
               <div className="font-medium">{f.title}</div>
-              <div className="opacity-80">{f.detail}</div>
+              <div className="opacity-80 mt-0.5">{f.detail}</div>
+              {f.recommendation && (
+                <div className="mt-1.5 pt-1.5 border-t border-current/20 opacity-90">
+                  <span className="opacity-60 text-[10px] uppercase tracking-wider mr-1">Fix:</span>
+                  {f.recommendation}
+                </div>
+              )}
             </div>
           ))}
           <button
@@ -129,6 +162,12 @@ function AuditRow({
       )}
     </div>
   );
+}
+
+function scoreClass(score: number): string {
+  if (score >= 80) return 'bg-ok/15 border-ok/50 text-ok';
+  if (score >= 50) return 'bg-warn/15 border-warn/50 text-warn';
+  return 'bg-bad/15 border-bad/50 text-bad';
 }
 
 function sevClass(s: 'critical' | 'warning' | 'suggestion'): string {

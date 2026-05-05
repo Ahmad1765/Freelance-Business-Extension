@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useApp } from '../state';
 import type { Lead, LeadStatus } from '../../shared/types';
 import { LeadDetail, statusHex } from '../components/LeadDetail';
@@ -33,6 +33,7 @@ export function LeadsTab() {
   const detailLeadId = useApp((s) => s.detailLeadId);
   const openDetail = useApp((s) => s.openDetail);
   const isSidePanel = useApp((s) => s.isSidePanel);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshSessions();
@@ -111,6 +112,14 @@ export function LeadsTab() {
           </button>
         </div>
       </div>
+      {auditError && (
+        <div className="border-b border-bad/40 bg-bad/10 px-3 py-2 text-xs text-bad flex items-start gap-2">
+          <span className="flex-1 break-words">{auditError}</span>
+          <button onClick={() => setAuditError(null)} className="opacity-60 hover:opacity-100">
+            ×
+          </button>
+        </div>
+      )}
       <div className="flex-1 overflow-auto divide-y divide-line">
         {leads.length === 0 && (
           <div className="p-6 text-center text-muted text-xs">No leads yet. Run a scrape.</div>
@@ -123,7 +132,12 @@ export function LeadsTab() {
             onToggle={() => toggle(l.id)}
             onOpen={() => openDetail(l.id)}
             onAudit={async () => {
-              await runAudit(l.id);
+              setAuditError(null);
+              const report = await runAudit(l.id);
+              if (report && !report.ok) {
+                setAuditError(`${l.name}: ${report.error ?? 'audit failed'}`);
+                return;
+              }
               setTab('audits');
             }}
           />

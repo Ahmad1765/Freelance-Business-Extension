@@ -116,7 +116,7 @@ async function handle(msg: Msg): Promise<unknown> {
 
     case 'AUDIT_RUN': {
       const lead = await leadStore.get(msg.payload.leadId);
-      if (!lead) return { ok: false, error: 'lead not found' };
+      if (!lead) return { ok: false, error: `lead not found: ${msg.payload.leadId}` };
       if (!msg.payload.force) {
         const cached = await auditStore.latestForLead(lead.id);
         if (cached && Date.now() - cached.ranAt < 7 * 86400_000) {
@@ -124,8 +124,19 @@ async function handle(msg: Msg): Promise<unknown> {
         }
       }
       const settings = await settingsStore.get();
-      const report = await runAudit({ lead, settings });
-      await auditStore.insert(report);
+      let report;
+      try {
+        report = await runAudit({ lead, settings });
+      } catch (e) {
+        const error = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        console.error('AUDIT_RUN: runAudit threw', e);
+        return { ok: false, error: `audit crashed: ${error}` };
+      }
+      try {
+        await auditStore.insert(report);
+      } catch (e) {
+        console.warn('AUDIT_RUN: failed to persist report', e);
+      }
       return { ok: true, report };
     }
     case 'AUDIT_LIST':
@@ -315,8 +326,19 @@ async function draftOutreach(leadId: string, templateId: string) {
   const gate = geoGate(lead.address, tpl, settings.geoStrictMode);
   if (!gate.allow) return { ok: false, error: `geo-gate: ${gate.reason}` };
 
+  // Pull the most recent successful audit for this lead so {{AUDIT_*}} tokens
+  // can be filled in. Failed-audit reports are skipped (their summary contains
+  // the error string, not findings — useless for outreach).
+  let latestAudit = null;
+  try {
+    const candidate = await auditStore.latestForLead(lead.id);
+    if (candidate?.ok) latestAudit = candidate;
+  } catch (e) {
+    console.warn('draftOutreach: failed to load latest audit', leadId, e);
+  }
+
   const optOutLink = settings.defaultOptOutBaseUrl;
-  const vars = buildVars(lead, settings, optOutLink);
+  const vars = buildVars(lead, settings, optOutLink, latestAudit);
 
   let rendered;
   try {

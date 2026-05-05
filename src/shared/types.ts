@@ -69,7 +69,20 @@ export type FindingCategory =
   | 'speed'
   | 'seo'
   | 'contact'
-  | 'a11y';
+  | 'a11y'
+  | 'http'
+  | 'trust'
+  | 'freshness'
+  | 'marketing';
+
+// Business buckets surfaced in the UI; technical category stays for internal
+// grouping. Optional on AuditFinding so legacy reports without it still render.
+export type BusinessImpact =
+  | 'reach'        // customers can't get in touch / use the site
+  | 'visibility'   // search & social discovery
+  | 'trust'        // security, "Not Secure", outdated software
+  | 'speed'        // load time, weight
+  | 'polish';      // minor cosmetic / nice-to-have
 
 export interface AuditFinding {
   id: string;
@@ -78,6 +91,8 @@ export interface AuditFinding {
   title: string;
   detail: string;
   evidence?: string;
+  impact?: BusinessImpact;
+  recommendation?: string;
 }
 
 export interface AuditReport {
@@ -96,6 +111,10 @@ export interface AuditReport {
     requests: number;
     loadMs: number;
   };
+  // 0-100, higher is healthier. Optional so legacy reports still type-check.
+  score?: number;
+  // 1-3 plain-English headlines used in the audits tab and outreach templates.
+  summary?: string[];
 }
 
 export type OutreachStatus =
