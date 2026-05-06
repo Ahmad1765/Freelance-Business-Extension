@@ -145,6 +145,31 @@ async function handle(msg: Msg): Promise<unknown> {
       await auditStore.delete(msg.payload.id);
       return { ok: true };
 
+    case 'AI_TEST': {
+      const { provider, apiKey } = msg.payload;
+      const endpoint = provider === 'nvidia'
+        ? 'https://integrate.ai.api.nvidia.com/v1/chat/completions'
+        : 'https://openrouter.ai/api/v1/chat/completions';
+      const model = provider === 'nvidia'
+        ? 'meta/llama-3.1-8b-instruct'
+        : 'meta-llama/llama-3.1-8b-instruct:free';
+      try {
+        const r = await fetch(endpoint, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Say OK' }], max_tokens: 5 }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!r.ok) {
+          const body = await r.text().catch(() => '');
+          return { ok: false, error: `HTTP ${r.status}${body ? ': ' + body.slice(0, 120) : ''}` };
+        }
+        return { ok: true, model };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    }
+
     case 'OUTREACH_DRAFT':
       return draftOutreach(msg.payload.leadId, msg.payload.templateId);
     case 'OUTREACH_QUEUE': {

@@ -1,13 +1,16 @@
 import type {
   AuditFinding,
   AuditReport,
+  AiRecommendation,
   BusinessImpact,
   FindingCategory,
   FindingSeverity,
   Lead,
+  SecurityHeaders,
   Settings,
 } from '../shared/types';
 import { hasHostPermissions } from './probe';
+import { decrypt } from '../shared/crypto';
 
 interface RunOpts {
   lead: Lead;
@@ -265,6 +268,26 @@ export async function runAudit({ lead, settings }: RunOpts): Promise<AuditReport
     runCheckBlock(ctx, 'freshness', findings, () => checkFreshness(html));
     runCheckBlock(ctx, 'marketing', findings, () => checkAnalytics(html));
 
+    // New extended checks
+    runCheckBlock(ctx, 'social-meta',  findings, () => checkSocialMeta(html));
+    runCheckBlock(ctx, 'heading-hier', findings, () => checkHeadingHierarchy(html));
+    runCheckBlock(ctx, 'robots-meta',  findings, () => checkRobotsMeta(html));
+    runCheckBlock(ctx, 'url-struct',   findings, () => checkUrlStructure(fetchedParsed));
+    runCheckBlock(ctx, 'perf-proxy',   findings, () => checkPerformanceProxies(html));
+    runCheckBlock(ctx, 'cms-detect',   findings, () => checkCmsDetection(html));
+
+    try {
+      const robotsFindings = await checkRobotsTxt(fetchedParsed, 5000);
+      findings.push(...robotsFindings);
+    } catch (e) {
+      alog('warn', { ...ctx, phase: 'robots-txt' }, 'robots.txt check failed', e);
+    }
+
+    const securityHeaders = extractSecurityHeaders(res);
+    runCheckBlock(ctx, 'sec-headers', findings, () =>
+      checkSecurityHeaders(securityHeaders, fetchedParsed.protocol === 'https:')
+    );
+
     try {
       const links = collectInternalLinks(html, fetchedParsed, settings.auditMaxLinks);
       alog('log', { ...ctx, phase: 'links' }, `checking ${links.length} internal link(s)`);
@@ -317,7 +340,7 @@ export async function runAudit({ lead, settings }: RunOpts): Promise<AuditReport
       `audit complete: score=${score}, findings=${deduped.length}, top="${summary[0] ?? '(none)'}"`
     );
 
-    return {
+    const auditResult: AuditReport = {
       id,
       leadId: lead.id,
       url,
@@ -334,7 +357,11 @@ export async function runAudit({ lead, settings }: RunOpts): Promise<AuditReport
       },
       score,
       summary,
+      securityHeaders,
+      aiEnhanced: false,
     };
+
+    return tryAiEnrich(auditResult, lead, settings);
   } catch (e) {
     alog('error', { ...ctx, phase: 'crash' }, 'unexpected failure', e);
     return baseReport(
@@ -823,6 +850,520 @@ function checkAnalytics(html: string): AuditFinding[] {
     ];
   }
   return [];
+}
+
+// ─── New extended checks ──────────────────────────────────────────────────────
+
+function checkSocialMeta(html: string): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  const head = headOf(html);
+  const ogProps = ['og:title', 'og:description', 'og:url', 'og:type'];
+  for (const prop of ogProps) {
+    const val = pickAttr(head, new RegExp(`<meta[^>]+property=["']${prop}["'][^>]*>`, 'i'), 'content');
+    if (!val) {
+      findings.push(
+        mkFinding({
+          severity: 'warning',
+          category: 'social-meta',
+          impact: 'visibility',
+          title: `Missing Open Graph tag: ${prop}`,
+          detail: `No <meta property="${prop}"> found. Social shares on Facebook/WhatsApp/LinkedIn show blank or wrong info.`,
+          recommendation: `Add <meta property="${prop}" content="..."> to your page <head>.`,
+        })
+      );
+    }
+  }
+  const twitterCard = pickAttr(head, /<meta[^>]+name=["']twitter:card["'][^>]*>/i, 'content');
+  if (!twitterCard) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'social-meta',
+        impact: 'visibility',
+        title: 'No Twitter/X card tag — links look plain when shared',
+        detail: 'No <meta name="twitter:card"> found.',
+        recommendation: 'Add <meta name="twitter:card" content="summary_large_image"> to enable rich link previews on X/Twitter.',
+      })
+    );
+  }
+  return findings;
+}
+
+function checkHeadingHierarchy(html: string): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  const h1Count = (html.match(/<h1\b/gi) ?? []).length;
+  const h2Count = (html.match(/<h2\b/gi) ?? []).length;
+  const h3Count = (html.match(/<h3\b/gi) ?? []).length;
+
+  if (h1Count > 1) {
+    findings.push(
+      mkFinding({
+        severity: 'warning',
+        category: 'seo',
+        impact: 'visibility',
+        title: `Multiple H1 headings found (${h1Count}) — dilutes SEO focus`,
+        detail: `The page has ${h1Count} <h1> tags. Search engines expect exactly one.`,
+        recommendation: 'Keep one <h1> for the main page topic; use <h2> for section headers.',
+      })
+    );
+  }
+  if (h2Count > 0 && h1Count === 0) {
+    findings.push(
+      mkFinding({
+        severity: 'warning',
+        category: 'seo',
+        impact: 'visibility',
+        title: 'Page uses H2 headings but has no H1',
+        detail: 'Heading structure starts at H2, skipping H1.',
+        recommendation: 'Add an <h1> above the H2 sections describing the page topic.',
+      })
+    );
+  }
+  if (h3Count > 0 && h2Count === 0) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'seo',
+        impact: 'visibility',
+        title: 'Heading levels skip from H1 to H3',
+        detail: 'H3 headings present but no H2 — heading hierarchy is non-sequential.',
+        recommendation: 'Use H2 for main sections and H3 only for sub-sections within H2 blocks.',
+      })
+    );
+  }
+  return findings;
+}
+
+function checkRobotsMeta(html: string): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  const head = headOf(html);
+  const robotsContent = pickAttr(head, /<meta[^>]+name=["']robots["'][^>]*>/i, 'content')?.toLowerCase() ?? '';
+  if (robotsContent.includes('noindex')) {
+    findings.push(
+      mkFinding({
+        severity: 'critical',
+        category: 'robots',
+        impact: 'visibility',
+        title: 'Homepage is hidden from Google — "noindex" is set',
+        detail: `<meta name="robots" content="${robotsContent}"> blocks search engine indexing.`,
+        recommendation: 'Remove "noindex" from the robots meta tag unless you intentionally want this page hidden.',
+      })
+    );
+  } else if (robotsContent.includes('nofollow')) {
+    findings.push(
+      mkFinding({
+        severity: 'warning',
+        category: 'robots',
+        impact: 'visibility',
+        title: 'Homepage has "nofollow" — Google won\'t crawl your links',
+        detail: `<meta name="robots" content="${robotsContent}"> tells Google not to follow any links on this page.`,
+        recommendation: 'Remove "nofollow" unless you have a specific reason to block link crawling on the homepage.',
+      })
+    );
+  }
+  return findings;
+}
+
+async function checkRobotsTxt(rootUrl: URL, timeoutMs: number): Promise<AuditFinding[]> {
+  const findings: AuditFinding[] = [];
+  const robotsUrl = `${rootUrl.origin}/robots.txt`;
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), Math.min(timeoutMs, 5000));
+    let res: Response;
+    try {
+      res = await fetch(robotsUrl, { signal: ctl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) {
+      findings.push(
+        mkFinding({
+          severity: 'suggestion',
+          category: 'robots',
+          impact: 'visibility',
+          title: 'No robots.txt file found',
+          detail: `${robotsUrl} returned HTTP ${res.status}.`,
+          recommendation: 'Create a /robots.txt file to guide search engine crawlers and list your sitemap URL.',
+        })
+      );
+      return findings;
+    }
+    const text = await res.text();
+    if (!text.includes('Sitemap:')) {
+      findings.push(
+        mkFinding({
+          severity: 'suggestion',
+          category: 'robots',
+          impact: 'visibility',
+          title: 'robots.txt has no Sitemap directive',
+          detail: 'The robots.txt file exists but does not reference a sitemap.',
+          recommendation: 'Add "Sitemap: https://yoursite.com/sitemap.xml" to help Google discover all your pages.',
+        })
+      );
+    }
+    if (/^disallow:\s*\/\s*$/im.test(text) && /user-agent:\s*\*/im.test(text)) {
+      findings.push(
+        mkFinding({
+          severity: 'critical',
+          category: 'robots',
+          impact: 'visibility',
+          title: 'robots.txt blocks ALL search engines from the entire site',
+          detail: 'Found "Disallow: /" under "User-agent: *" — no search engine can index any page.',
+          recommendation: 'Remove or correct the "Disallow: /" rule in robots.txt unless you intentionally want zero search traffic.',
+        })
+      );
+    }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') return findings;
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'robots',
+        impact: 'visibility',
+        title: 'Could not check robots.txt',
+        detail: `Fetch failed: ${errMsg(e)}`,
+      })
+    );
+  }
+  return findings;
+}
+
+function checkUrlStructure(url: URL): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  const path = url.pathname + url.search;
+  if (/[?&](PHPSESSID|sid|sessionid)=/i.test(path)) {
+    findings.push(
+      mkFinding({
+        severity: 'warning',
+        category: 'seo',
+        impact: 'visibility',
+        title: 'Session ID visible in URL — creates duplicate content for Google',
+        detail: `URL contains a session parameter: ${url.href}`,
+        recommendation: 'Configure your server to store session IDs in cookies instead of URLs.',
+      })
+    );
+  }
+  if (/\.(html?|php)$/i.test(url.pathname)) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'seo',
+        impact: 'polish',
+        title: 'URL includes a file extension (.html / .php)',
+        detail: `${url.pathname} — file extensions are unnecessary and look dated.`,
+        recommendation: 'Configure URL rewriting to remove extensions for cleaner, shareable URLs.',
+      })
+    );
+  }
+  const depth = url.pathname.split('/').filter(Boolean).length;
+  if (depth > 4) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'seo',
+        impact: 'polish',
+        title: 'URL is deeply nested (more than 4 path segments)',
+        detail: `${url.pathname} has ${depth} path segments.`,
+        recommendation: 'Flatten your URL structure so important pages are closer to the root.',
+      })
+    );
+  }
+  return findings;
+}
+
+function checkPerformanceProxies(html: string): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  const head = headOf(html);
+
+  const scriptRx = /<script\b[^>]+src=["'][^"']+["'][^>]*>/gi;
+  const renderBlocking = Array.from(head.matchAll(scriptRx)).filter(
+    (m) => !/\b(?:defer|async)\b/i.test(m[0])
+  );
+  if (renderBlocking.length > 0) {
+    findings.push(
+      mkFinding({
+        severity: 'warning',
+        category: 'speed',
+        impact: 'speed',
+        title: `${renderBlocking.length} render-blocking script(s) slow down page load`,
+        detail: 'Scripts in <head> without defer or async block the browser from showing content.',
+        recommendation: 'Add the "defer" attribute to <script src="..."> tags in your <head>.',
+      })
+    );
+  }
+
+  const imgTags = Array.from(html.matchAll(/<img\b[^>]*>/gi));
+  if (imgTags.length >= 3 && !imgTags.some((m) => /loading=["']lazy["']/i.test(m[0]))) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'speed',
+        impact: 'speed',
+        title: `${imgTags.length} images load eagerly — slowing initial page render`,
+        detail: 'No images use loading="lazy", so all images download immediately on page load.',
+        recommendation: 'Add loading="lazy" to images below the fold to improve load time.',
+      })
+    );
+  }
+
+  if (!/<link\b[^>]+rel=["']preload["'][^>]*>/i.test(head)) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'speed',
+        impact: 'speed',
+        title: 'No resource preloading configured',
+        detail: 'No <link rel="preload"> found in <head>.',
+        recommendation: 'Preload critical fonts or hero images with <link rel="preload"> to improve perceived load speed.',
+      })
+    );
+  }
+  return findings;
+}
+
+function checkCmsDetection(html: string): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  if (/\/sites\/default\/files\//i.test(html) || /name=["']generator["'][^>]*content=["'][^"']*drupal/i.test(html)) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'trust',
+        impact: 'polish',
+        title: 'Site runs on Drupal CMS',
+        detail: 'Drupal detected from page source.',
+        recommendation: 'Ensure Drupal core and all modules are up to date to avoid known vulnerabilities.',
+      })
+    );
+  } else if (/\/media\/joomla_/i.test(html) || /name=["']generator["'][^>]*content=["'][^"']*joomla/i.test(html)) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'trust',
+        impact: 'polish',
+        title: 'Site runs on Joomla CMS',
+        detail: 'Joomla detected from page source.',
+        recommendation: 'Keep Joomla and its extensions updated to patch security vulnerabilities.',
+      })
+    );
+  } else if (/squarespace\.com/i.test(html)) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'trust',
+        impact: 'polish',
+        title: 'Site is hosted on Squarespace',
+        detail: 'Squarespace platform detected from asset URLs.',
+        recommendation: 'Squarespace is fully managed — ensure your subscription is active and CMS is up to date.',
+      })
+    );
+  } else if (/wixstatic\.com/i.test(html)) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'trust',
+        impact: 'polish',
+        title: 'Site is hosted on Wix',
+        detail: 'Wix platform detected from asset URLs.',
+        recommendation: 'Wix is fully managed — ensure your plan is active. Custom domains improve trust and SEO.',
+      })
+    );
+  }
+  return findings;
+}
+
+function extractSecurityHeaders(res: Response): SecurityHeaders {
+  const h = res.headers;
+  const server = h.get('server') ?? h.get('x-powered-by') ?? null;
+  const serverLeaks = server && /[\d.]{3,}/.test(server) ? server : null;
+  return {
+    csp:               !!h.get('content-security-policy'),
+    xFrameOptions:     !!h.get('x-frame-options'),
+    xContentTypeOpts:  !!h.get('x-content-type-options'),
+    hsts:              !!h.get('strict-transport-security'),
+    referrerPolicy:    !!h.get('referrer-policy'),
+    permissionsPolicy: !!h.get('permissions-policy'),
+    serverLeaks,
+  };
+}
+
+function checkSecurityHeaders(headers: SecurityHeaders, isHttps: boolean): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  if (!headers.csp) {
+    findings.push(
+      mkFinding({
+        severity: 'warning',
+        category: 'security',
+        impact: 'trust',
+        title: 'No Content Security Policy header — XSS attacks are easier',
+        detail: 'Missing Content-Security-Policy response header.',
+        recommendation: 'Add a CSP header via your server or CDN to restrict which scripts can run on your pages.',
+      })
+    );
+  }
+  if (isHttps && !headers.hsts) {
+    findings.push(
+      mkFinding({
+        severity: 'warning',
+        category: 'security',
+        impact: 'trust',
+        title: 'HSTS not enabled — browser may allow plain HTTP connections',
+        detail: 'Missing Strict-Transport-Security header on HTTPS site.',
+        recommendation: 'Add "Strict-Transport-Security: max-age=31536000; includeSubDomains" to force HTTPS.',
+      })
+    );
+  }
+  if (!headers.xFrameOptions && !headers.csp) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'security',
+        impact: 'trust',
+        title: 'Site can be embedded in iframes (clickjacking risk)',
+        detail: 'Missing X-Frame-Options header.',
+        recommendation: 'Add "X-Frame-Options: SAMEORIGIN" to prevent your site from being embedded in malicious frames.',
+      })
+    );
+  }
+  if (!headers.xContentTypeOpts) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'security',
+        impact: 'trust',
+        title: 'Missing X-Content-Type-Options header',
+        detail: 'Browsers may try to "sniff" content types, enabling certain attacks.',
+        recommendation: 'Add "X-Content-Type-Options: nosniff" to your server response headers.',
+      })
+    );
+  }
+  if (headers.serverLeaks) {
+    findings.push(
+      mkFinding({
+        severity: 'suggestion',
+        category: 'security',
+        impact: 'trust',
+        title: 'Server version info is publicly visible',
+        detail: `Response header reveals: "${headers.serverLeaks}"`,
+        recommendation: 'Configure your web server to hide version information from response headers.',
+      })
+    );
+  }
+  return findings;
+}
+
+async function tryAiEnrich(
+  report: AuditReport,
+  lead: Lead,
+  settings: Settings
+): Promise<AuditReport> {
+  if (!settings.aiEnabled || !settings.aiApiKey) return report;
+
+  let apiKey: string;
+  try {
+    apiKey = await decrypt(settings.aiApiKey);
+    if (!apiKey) return report;
+  } catch {
+    return report;
+  }
+
+  const endpoint = settings.aiProvider === 'nvidia'
+    ? 'https://integrate.ai.api.nvidia.com/v1/chat/completions'
+    : 'https://openrouter.ai/api/v1/chat/completions';
+
+  const criticals = report.findings.filter((f) => f.severity === 'critical');
+  const warnings  = report.findings.filter((f) => f.severity === 'warning');
+  const suggs     = report.findings.filter((f) => f.severity === 'suggestion');
+
+  const fmtList = (fs: AuditFinding[]) =>
+    fs.length ? fs.map((f) => `- ${f.title}: ${f.detail}`).join('\n') : '(none)';
+
+  const userPrompt = `You are a web consultant. Analyze this website audit and return JSON only.
+
+Business: ${lead.name ?? 'Unknown'} (${lead.category ?? 'local business'}) — ${report.url}
+Score: ${report.score ?? 0}/100
+
+Issues found:
+CRITICAL:
+${fmtList(criticals)}
+
+WARNINGS:
+${fmtList(warnings)}
+
+SUGGESTIONS:
+${fmtList(suggs.slice(0, 5))}
+
+Return this exact JSON (no markdown, no explanation, no code fences):
+{"aiSummary":"2-3 sentence summary for the business owner in plain English","aiRecommendations":[{"priority":1,"title":"...","action":"start with a verb","impact":"trust"}]}
+
+Rules: 3-5 recommendations, priority 1 = most urgent, impact must be one of: trust, reach, visibility, speed, polish.`;
+
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 20000);
+    let res: Response;
+    try {
+      res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          ...(settings.aiProvider === 'openrouter' ? { 'HTTP-Referer': 'chrome-extension://lbe' } : {}),
+        },
+        body: JSON.stringify({
+          model: settings.aiModel,
+          messages: [{ role: 'user', content: userPrompt }],
+          max_tokens: 600,
+          temperature: 0.3,
+        }),
+        signal: ctl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!res.ok) {
+      alog('warn', { url: report.url }, `AI provider returned HTTP ${res.status}`);
+      return report;
+    }
+
+    const json = await res.json() as { choices?: { message?: { content?: string } }[] };
+    const raw = json?.choices?.[0]?.message?.content ?? '';
+    if (!raw) return report;
+
+    let parsed: { aiSummary?: string; aiRecommendations?: AiRecommendation[] } = {};
+    try {
+      const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+      parsed = JSON.parse(clean);
+    } catch {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try { parsed = JSON.parse(jsonMatch[0]); } catch { return report; }
+      } else {
+        return report;
+      }
+    }
+
+    const validImpacts = new Set(['trust', 'reach', 'visibility', 'speed', 'polish']);
+    const recs = (parsed.aiRecommendations ?? [])
+      .filter((r) => r && typeof r.title === 'string' && typeof r.action === 'string')
+      .map((r) => ({
+        priority: ([1, 2, 3].includes(r.priority) ? r.priority : 3) as 1 | 2 | 3,
+        title: String(r.title).slice(0, 120),
+        action: String(r.action).slice(0, 200),
+        impact: (validImpacts.has(r.impact) ? r.impact : 'polish') as AiRecommendation['impact'],
+      }));
+
+    return {
+      ...report,
+      aiSummary: typeof parsed.aiSummary === 'string' ? parsed.aiSummary.slice(0, 500) : undefined,
+      aiRecommendations: recs.length ? recs : undefined,
+      aiEnhanced: true,
+    };
+  } catch (e) {
+    alog('warn', { url: report.url }, `AI enrichment failed: ${errMsg(e)}`);
+    return report;
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

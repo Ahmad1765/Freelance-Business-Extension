@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../state';
-import type { AuditReport } from '../../shared/types';
+import type { AuditReport, SecurityHeaders } from '../../shared/types';
 
 export function AuditsTab() {
   const audits = useApp((s) => s.audits);
@@ -81,7 +81,12 @@ function AuditRow({
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium truncate">{audit.url}</div>
+          <div className="flex items-center gap-1.5">
+            <div className="text-sm font-medium truncate">{audit.url}</div>
+            {audit.aiEnhanced && (
+              <span className="flex-shrink-0 text-[9px] px-1 rounded bg-accent/20 text-accent border border-accent/30">AI</span>
+            )}
+          </div>
           {audit.ok && summary.length > 0 && (
             <div className="text-xs text-text/80 mt-0.5 truncate">
               Top issue: {summary[0]}
@@ -116,6 +121,32 @@ function AuditRow({
               Audit error: {audit.error}
             </div>
           )}
+
+          {audit.aiSummary && (
+            <div className="text-xs bg-accent/10 border border-accent/30 rounded p-2">
+              <div className="text-[10px] uppercase tracking-wider text-muted mb-1">AI Analysis</div>
+              <p className="text-text/90 leading-relaxed">{audit.aiSummary}</p>
+            </div>
+          )}
+
+          {audit.aiRecommendations && audit.aiRecommendations.length > 0 && (
+            <div className="bg-panel border border-line rounded p-2 space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-muted">Prioritized Actions</div>
+              {audit.aiRecommendations.map((rec, i) => (
+                <div key={i} className="flex gap-2 text-xs">
+                  <span className={`flex-shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold
+                    ${rec.priority === 1 ? 'bg-bad/30 text-bad' : rec.priority === 2 ? 'bg-warn/30 text-warn' : 'bg-accent/30 text-accent'}`}>
+                    {rec.priority}
+                  </span>
+                  <div>
+                    <div className="font-medium">{rec.title}</div>
+                    <div className="text-text/70">{rec.action}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {audit.ok && summary.length > 0 && (
             <div className="text-xs bg-panel border border-line rounded p-2">
               <div className="font-medium text-text mb-1">What to tell the owner</div>
@@ -126,6 +157,11 @@ function AuditRow({
               </ul>
             </div>
           )}
+
+          {audit.securityHeaders && (
+            <SecurityHeadersPanel headers={audit.securityHeaders} />
+          )}
+
           {audit.findings.length === 0 && audit.ok && (
             <div className="text-xs text-ok bg-ok/10 border border-ok/30 rounded p-2">
               No issues detected. Site looks healthy.
@@ -174,4 +210,31 @@ function sevClass(s: 'critical' | 'warning' | 'suggestion'): string {
   if (s === 'critical') return 'bg-bad/10 border-bad/40 text-bad';
   if (s === 'warning') return 'bg-warn/10 border-warn/40 text-warn';
   return 'bg-accent/10 border-accent/40 text-accent';
+}
+
+function SecurityHeadersPanel({ headers }: { headers: SecurityHeaders }) {
+  const items: { label: string; present: boolean }[] = [
+    { label: 'CSP',                  present: headers.csp },
+    { label: 'HSTS',                 present: headers.hsts },
+    { label: 'X-Frame-Options',      present: headers.xFrameOptions },
+    { label: 'X-Content-Type-Opts',  present: headers.xContentTypeOpts },
+    { label: 'Referrer-Policy',      present: headers.referrerPolicy },
+    { label: 'Permissions-Policy',   present: headers.permissionsPolicy },
+  ];
+  return (
+    <div className="text-xs border border-line rounded p-2">
+      <div className="text-[10px] uppercase tracking-wider text-muted mb-1.5">Security Headers</div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+        {items.map((item) => (
+          <div key={item.label} className="flex items-center gap-1">
+            <span className={item.present ? 'text-ok' : 'text-bad'}>{item.present ? '✓' : '✗'}</span>
+            <span className={item.present ? 'text-text/80' : 'text-text/50'}>{item.label}</span>
+          </div>
+        ))}
+      </div>
+      {headers.serverLeaks && (
+        <div className="mt-1.5 text-[10px] text-warn">Server leaks: {headers.serverLeaks}</div>
+      )}
+    </div>
+  );
 }

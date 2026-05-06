@@ -73,7 +73,9 @@ export type FindingCategory =
   | 'http'
   | 'trust'
   | 'freshness'
-  | 'marketing';
+  | 'marketing'
+  | 'social-meta'
+  | 'robots';
 
 // Business buckets surfaced in the UI; technical category stays for internal
 // grouping. Optional on AuditFinding so legacy reports without it still render.
@@ -93,6 +95,23 @@ export interface AuditFinding {
   evidence?: string;
   impact?: BusinessImpact;
   recommendation?: string;
+}
+
+export interface SecurityHeaders {
+  csp:               boolean;
+  xFrameOptions:     boolean;
+  xContentTypeOpts:  boolean;
+  hsts:              boolean;
+  referrerPolicy:    boolean;
+  permissionsPolicy: boolean;
+  serverLeaks:       string | null;
+}
+
+export interface AiRecommendation {
+  priority: 1 | 2 | 3;
+  title:    string;
+  action:   string;
+  impact:   BusinessImpact;
 }
 
 export interface AuditReport {
@@ -115,6 +134,10 @@ export interface AuditReport {
   score?: number;
   // 1-3 plain-English headlines used in the audits tab and outreach templates.
   summary?: string[];
+  securityHeaders?:   SecurityHeaders;
+  aiEnhanced?:        boolean;
+  aiSummary?:         string;
+  aiRecommendations?: AiRecommendation[];
 }
 
 export type OutreachStatus =
@@ -173,6 +196,10 @@ export interface Settings {
   auditTimeoutMs: number;
   geoStrictMode: boolean;
   acknowledgedLegal: boolean;
+  aiEnabled:    boolean;
+  aiProvider:   'openrouter' | 'nvidia';
+  aiModel:      string;
+  aiApiKey?:    string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -190,6 +217,9 @@ export const DEFAULT_SETTINGS: Settings = {
   auditTimeoutMs: 60_000,
   geoStrictMode: true,
   acknowledgedLegal: false,
+  aiEnabled:  false,
+  aiProvider: 'openrouter',
+  aiModel:    'meta-llama/llama-3.1-8b-instruct:free',
 };
 
 export interface ScrapeProgress {

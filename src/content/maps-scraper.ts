@@ -262,7 +262,7 @@ function classifyFacts(
   name: string
 ): { phone: string | null; address: string; category: string | null } {
   const HOURS_RX = /\b(open|closed|closes|opens|opening|24\s*hours|permanently)\b/i;
-  const PHONE_RX = /^\+?[\d\s().\-]{8,}$/;
+  const PHONE_RX = /^\+?[\d\s().-]{8,}$/;
   const STREET_RX = /\d+\s+\S|,/;
   const lower = (s: string) => s.toLowerCase();
 

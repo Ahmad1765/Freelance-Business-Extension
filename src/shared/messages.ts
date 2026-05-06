@@ -24,6 +24,7 @@ export type Msg =
   | { kind: 'AUDIT_RUN'; payload: { leadId: string; force?: boolean } }
   | { kind: 'AUDIT_LIST'; payload?: { leadId?: string } }
   | { kind: 'AUDIT_DELETE'; payload: { id: string } }
+  | { kind: 'AI_TEST'; payload: { provider: string; apiKey: string } }
   | { kind: 'OUTREACH_DRAFT'; payload: { leadId: string; templateId: string } }
   | { kind: 'OUTREACH_QUEUE'; payload: { id: string } }
   | { kind: 'OUTREACH_SEND_NOW'; payload: { id: string } }
@@ -57,6 +58,7 @@ export interface MsgResponses {
   AUDIT_RUN: { ok: boolean; report?: AuditReport; error?: string };
   AUDIT_LIST: { reports: AuditReport[] };
   AUDIT_DELETE: { ok: boolean };
+  AI_TEST: { ok: boolean; model?: string; error?: string };
   OUTREACH_DRAFT: { ok: boolean; item?: OutreachItem; error?: string };
   OUTREACH_QUEUE: { ok: boolean; error?: string };
   OUTREACH_SEND_NOW: { ok: boolean; error?: string };

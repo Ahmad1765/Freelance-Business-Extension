@@ -266,6 +266,9 @@ export const useApp = create<State>((set, get) => ({
     auditTimeoutMs: 60_000,
     geoStrictMode: true,
     acknowledgedLegal: false,
+    aiEnabled: false,
+    aiProvider: 'openrouter' as const,
+    aiModel: 'meta-llama/llama-3.1-8b-instruct:free',
   },
   refreshSettings: async () => set({ settings: await send('SETTINGS_GET') }),
   saveSettings: async (patch) => {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../state';
+import { send } from '../../shared/messages';
 
 export function SettingsTab() {
   const settings = useApp((s) => s.settings);
@@ -172,6 +173,58 @@ export function SettingsTab() {
         </div>
       </Card>
 
+      <Card title="AI Analysis">
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={local.aiEnabled}
+            onChange={(e) => setLocal({ ...local, aiEnabled: e.target.checked })}
+          />
+          Enable AI-powered recommendations after each audit
+        </label>
+        <Field label="Provider">
+          <select
+            value={local.aiProvider}
+            disabled={!local.aiEnabled}
+            onChange={(e) => {
+              const provider = e.target.value as 'openrouter' | 'nvidia';
+              const model = provider === 'nvidia'
+                ? 'meta/llama-3.1-8b-instruct'
+                : 'meta-llama/llama-3.1-8b-instruct:free';
+              setLocal({ ...local, aiProvider: provider, aiModel: model });
+            }}
+            className={inputCls}
+          >
+            <option value="openrouter">OpenRouter (free models)</option>
+            <option value="nvidia">NVIDIA NIM (free credits)</option>
+          </select>
+        </Field>
+        <Field label="Model">
+          <input
+            value={local.aiModel}
+            disabled={!local.aiEnabled}
+            onChange={(e) => setLocal({ ...local, aiModel: e.target.value })}
+            className={inputCls}
+          />
+        </Field>
+        <Field label="API Key">
+          <input
+            type="password"
+            value={local.aiApiKey ?? ''}
+            disabled={!local.aiEnabled}
+            onChange={(e) => setLocal({ ...local, aiApiKey: e.target.value || undefined })}
+            className={inputCls}
+            placeholder="paste key here"
+          />
+        </Field>
+        <p className="text-[10px] text-muted">
+          OpenRouter: free key at <span className="text-accent">openrouter.ai</span> · NVIDIA: <span className="text-accent">integrate.nvidia.com</span>
+        </p>
+        {local.aiEnabled && local.aiApiKey && (
+          <AiTestButton provider={local.aiProvider} apiKey={local.aiApiKey} />
+        )}
+      </Card>
+
       <Card title="Scrape defaults">
         <div className="grid grid-cols-2 gap-2">
           <Field label="Default max results">
@@ -233,5 +286,46 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="text-xs text-muted">{label}</span>
       {children}
     </label>
+  );
+}
+
+function AiTestButton({ provider, apiKey }: { provider: string; apiKey: string }) {
+  const [status, setStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  const [msg, setMsg] = useState('');
+
+  const test = async () => {
+    setStatus('testing');
+    setMsg('');
+    try {
+      const r = await send('AI_TEST', { provider, apiKey });
+      if (r.ok) {
+        setStatus('ok');
+        setMsg(r.model ?? 'connected');
+      } else {
+        setStatus('fail');
+        setMsg(r.error ?? 'unknown error');
+      }
+    } catch (e) {
+      setStatus('fail');
+      setMsg(String(e));
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={() => void test()}
+        disabled={status === 'testing'}
+        className="text-xs px-2 py-1 border border-line rounded hover:border-accent hover:text-accent disabled:opacity-50"
+      >
+        {status === 'testing' ? 'Testing…' : 'Test connection'}
+      </button>
+      {status === 'ok' && (
+        <span className="text-xs text-ok">Connected: {msg}</span>
+      )}
+      {status === 'fail' && (
+        <span className="text-xs text-bad truncate max-w-[180px]" title={msg}>Failed: {msg}</span>
+      )}
+    </div>
   );
 }

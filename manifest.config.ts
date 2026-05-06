@@ -29,7 +29,12 @@ const manifest = {
   },
   permissions: ['storage', 'activeTab', 'scripting', 'identity', 'alarms', 'tabs', 'sidePanel'],
   host_permissions: ['https://www.google.com/maps/*', 'https://gmail.googleapis.com/*'],
-  optional_host_permissions: ['https://*/*', 'http://*/*'],
+  optional_host_permissions: [
+    'https://*/*',
+    'http://*/*',
+    'https://openrouter.ai/*',
+    'https://integrate.ai.api.nvidia.com/*',
+  ],
   content_scripts: [
     {
       matches: ['https://www.google.com/maps/*'],
