@@ -1,26 +1,53 @@
-# deps + build
-node_modules
-dist
+# Dependencies
+node_modules/
+
+# Production
+dist/
 dist-zip/
-*.tsbuildinfo
-CLAUDE.md
-# env
+
+# Environment variables
 .env
 .env.local
 .env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# logs + caches
+# Build artifacts
+*.tsbuildinfo
+
+# Logs
+logs
 *.log
-.vite
-.cache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Vite / Caches
+.vite/
+.cache/
 .eslintcache
 
-# editors
+# Editors and IDEs
 .vscode/
 .idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
 *.swp
 
-# OS
+# OS Files
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Project specific
+CLAUDE.md
+
+# Accidental shell-redirect artifacts
+t.id
+{,
+set({
+State)

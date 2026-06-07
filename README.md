@@ -1,169 +1,149 @@
-# Local Business Engine
+# 🚀 Local Business Engine
 
-Manifest V3 browser extension. Scrapes Google Maps results, classifies businesses by website presence, audits existing sites, and runs a throttled outreach queue through Gmail.
+[![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
+[![Vite](https://img.shields.io/badge/Vite-B73BFE?style=for-the-badge&logo=vite&logoColor=FFD62E)](https://vitejs.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
 
-Personal-use tool. Not intended for the Chrome Web Store.
+> A powerful Manifest V3 browser extension for local lead generation. It scrapes Google Maps results, classifies businesses by website presence, audits existing sites, and runs a throttled outreach queue through Gmail.
 
-## Stack
+---
 
-- TypeScript + React (popup, options)
-- Vite + `@crxjs/vite-plugin` (bundling)
-- Tailwind (styling)
-- Dexie / IndexedDB (lead/audit/outreach storage)
-- Zustand (popup state)
-- Gmail REST API (outreach send via `chrome.identity` OAuth)
+## ✨ Features
 
-No backend. Everything runs in the extension.
+- **🗺️ Google Maps Scraper**: Seamlessly extract business leads directly from Google Maps search results.
+- **🔍 Site Classification**: Automatically determine if scraped leads have an active website.
+- **📈 Comprehensive Auditing**: Run detailed site checks for SEO metrics (headers, canonicals, H1 count), security (HTTPS, CSP, HSTS), and visible contact info.
+- **✉️ Automated Outreach**: A fully customizable, throttled outreach queue integrated with the Gmail REST API to safely send personalized emails.
+- **🛡️ Secure Storage**: Localized data storage with Dexie (IndexedDB) and encrypted API keys.
+- **🚫 Zero Backend**: Everything runs securely entirely within your browser extension.
 
-## First-time setup
+---
+
+## 🛠️ Tech Stack
+
+- **Frontend**: TypeScript, React, Tailwind CSS
+- **State Management**: Zustand
+- **Storage**: Dexie (IndexedDB) / `chrome.storage.local`
+- **Build Tool**: Vite + `@crxjs/vite-plugin`
+- **Outreach**: Gmail REST API (`chrome.identity` OAuth)
+
+---
+
+## 🚀 Getting Started
+
+### 1. First-time Setup
+
+Clone the repository and install dependencies:
 
 ```bash
 npm install
 npm run build
 ```
 
-Then load it as an unpacked extension:
+Then, load it as an unpacked extension:
 
-1. Open `chrome://extensions` (or `edge://extensions`)
-2. Enable **Developer mode** (top right)
-3. Click **Load unpacked**
-4. Select the `dist/` folder in this repo
-5. Pin the extension icon to the toolbar
+1. Open `chrome://extensions` (or `edge://extensions`).
+2. Enable **Developer mode** (top right).
+3. Click **Load unpacked**.
+4. Select the `dist/` folder in this repository.
+5. Pin the extension icon to your browser toolbar.
 
-### Gmail OAuth (only needed if you want to send email)
+### 2. Gmail OAuth (Optional for Outreach)
 
-The manifest ships with `__REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID__.apps.googleusercontent.com`. Until you replace it, "Connect Gmail" will fail. Steps:
+To utilize the email outreach functionality, you must configure a Google OAuth Client ID:
 
-1. Open <https://console.cloud.google.com> and create a project
-2. APIs & Services → **Enable Gmail API**
-3. APIs & Services → **OAuth consent screen** → External, fill required fields, add yourself as a test user
-4. APIs & Services → **Credentials** → **Create credentials → OAuth client ID** → **Chrome extension**
-5. Application ID = your unpacked extension's ID (visible on `chrome://extensions`)
-6. Copy the new client ID
-7. Edit `manifest.config.ts` → replace the placeholder `client_id`
-8. `npm run build`
-9. Reload the unpacked extension
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create a new project.
+2. Navigate to **APIs & Services** → **Enable Gmail API**.
+3. Under **OAuth consent screen** → Select **External**, fill in required fields, and add yourself as a test user.
+4. Under **Credentials** → **Create credentials** → **OAuth client ID** → Choose **Chrome extension**.
+5. Set the **Application ID** to your unpacked extension's ID (found on `chrome://extensions`).
+6. Copy the generated client ID.
+7. Open `manifest.config.ts` and replace the placeholder `__REPLACE_WITH_GOOGLE_OAUTH_CLIENT_ID__.apps.googleusercontent.com` with your new client ID.
+8. Run `npm run build` and reload the extension.
 
-You can use the rest of the extension (scrape, audit, drafts) without Gmail.
+*Note: You can still use the scraper and auditor without setting up Gmail.*
 
-## Running it
+---
 
-### Scrape
+## 📖 Usage Guide
 
-1. Open Google Maps
-2. Search a query — e.g. `plumbers in austin tx`
-3. Wait for the left-hand result list to render
-4. Click the extension icon → **Scrape** tab → **Start scraping**
-5. Watch the counter; leads land in the **Leads** tab as they come in
-6. Click **Stop** any time
+### 📍 Scrape
+1. Open Google Maps and search for a query (e.g., `plumbers in austin tx`).
+2. Wait for the left-hand result list to render.
+3. Click the extension icon → navigate to the **Scrape** tab → click **Start scraping**.
+4. Leads will populate in the **Leads** tab in real-time. Click **Stop** when finished.
 
-### Classify
+### 🏷️ Classify
+Filter leads in the **Leads** tab by `All`, `No site`, `Has site`, or `Dead`. Leads with a website undergo a HEAD-probe. The extension will request permission to access arbitrary domains for these site checks.
 
-The **Leads** tab has filters: `All`, `No site`, `Has site`, `Dead`.
-Each lead with a website is HEAD-probed. The first time you scrape, the extension will ask for permission to access arbitrary domains — that's the audit/probe permission. Approve to enable site checks.
+### 🔎 Audit
+Click **Audit** on any lead row to initiate an audit. This checks:
+- Title, description, viewport, canonical, and `og:image`.
+- Security headers (HTTPS, HSTS, X-Content-Type-Options, CSP).
+- SEO essentials (H1 count, image alt coverage).
+- Visible contact info (phone/email).
+- Internal broken-link check (capped by `auditMaxLinks`).
 
-### Audit
+Results are grouped by severity in the **Audits** tab. Cached results exist for 7 days.
 
-In **Leads**, click **Audit** on a row. The extension fetches the homepage and runs:
-- Title / description / viewport / canonical / og:image
-- HTTPS, HSTS, X-Content-Type-Options, CSP, Referrer-Policy
-- H1 count, image alt coverage, structured data
-- Visible contact info (phone/email)
-- Internal link crawl (broken-link check) — capped by `auditMaxLinks` setting
+### 📧 Outreach
+1. **Settings tab**: Fill in `senderName`, `senderEmail`, and `senderAddress` (required for CAN-SPAM compliance).
+2. **Connect Gmail** (requires OAuth setup).
+3. **Outreach tab**: Select a lead, pick a template, and generate a **Draft**.
+4. Choose **Queue** (sends on a 5-minute interval with jitter) or **Send now**.
+5. Templates are managed on the **Options page**.
 
-Findings appear in the **Audits** tab grouped by severity. Re-runs are skipped if a recent (≤7 days) cached result exists; click **Re-run** to force.
+---
 
-### Outreach
+## ⚙️ Settings & Limitations
 
-1. **Settings** tab → fill `senderName`, `senderEmail`, `senderAddress`. The address is required by CAN-SPAM. Click **Save**.
-2. Click **Connect Gmail** (requires the OAuth client ID step above).
-3. **Outreach** tab → pick a lead + template → **Draft**.
-4. Each draft has **Queue** (sends on the 5-minute alarm with jitter + caps) or **Send now**.
-5. Templates are editable on the **Options page** (button at the bottom of Settings, or `chrome://extensions` → Details → Extension options).
-6. Opt-outs are honored automatically. Add an email manually on the Options page if someone replies asking to unsubscribe.
+Adjust configuration on the **Settings** tab:
 
-## Limits and caps
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `outreachDailyCap` | Total emails sent per day. | 30 |
+| `outreachPerDomainCap` | Max sends to the same domain per day. | 1 |
+| `outreachJitter` | Random delay between queued sends. | 30–120s |
+| `geoStrictMode` | Block CASL/GDPR-restricted prospects. | true |
+| `auditMaxLinks` | Links crawled per audit. | 50 |
+| `auditTimeoutMs` | Per-fetch timeout. | 60000ms |
 
-Adjust on the Settings tab:
+### Optional Integrations
+- **Hunter.io**: Add your API key in the Options page to find precise emails by domain. Falls back to `info@<domain>`.
 
-- `outreachDailyCap` — total sends/day (default 30; warm up gradually)
-- `outreachPerDomainCap` — max sends to the same domain in a day (default 1)
-- `outreachJitter` — random delay between sends (default 30–120s)
-- `geoStrictMode` — block CASL/GDPR-restricted prospects when true
-- `auditMaxLinks` — links crawled per audit (default 50)
-- `auditTimeoutMs` — per-fetch timeout (default 60000)
+---
 
-## Hunter.io (optional)
+## 👨‍💻 Development
 
-If set on the Options page, the extension uses your Hunter API key to find emails by domain. Otherwise it falls back to `info@<domain>`. Stored encrypted in `chrome.storage` (AES-GCM; treat as obfuscation, not security).
-
-## Dev workflow
+Start the development server with HMR:
 
 ```bash
-npm run dev      # vite dev server with HMR; load /dist as unpacked
-npm run build    # production build
+npm run dev      # Load /dist as unpacked
+npm run build    # Production build
 npm run typecheck
 npm run lint
 ```
 
-## Where data lives
+---
 
-- IndexedDB database `local-biz-engine` — leads, audits, outreach, templates, opt-outs
-- `chrome.storage.local` — settings, salt, scrape progress, encrypted Hunter key
+## ⚖️ Legal & Ethical Notes
 
-To wipe everything: `chrome://extensions` → remove the extension and reload it.
+This tool is designed for **personal use**. Users are responsible for maintaining compliance with:
 
-## CSV export
+- **Google Maps ToS**: Prohibits automated scraping; scale usage carefully.
+- **CAN-SPAM (US)**: Physical address and opt-out link are strictly required.
+- **GDPR / e-Privacy (EU)**: Cold outreach to personal emails requires a legitimate-interest basis.
+- **CASL (Canada) / Spam Act (AU)**: Opt-in laws (blocked by default under `geoStrictMode`).
 
-Leads tab → select rows (or none = all) → **Export CSV**. Saved with UTF-8 BOM so Excel handles diacritics.
+---
 
-## Legal & ethical notes
+## 📌 Known Limitations
 
-This is a personal tool. You are responsible for compliance with:
+- **Google Maps DOM Updates**: Scraper selectors in `src/content/maps-scraper.ts` may need updates if Google changes its layout.
+- **Service Worker Sleep**: MV3 service workers sleep after ~30s of inactivity. The queue runs securely on a 5-minute `chrome.alarms` tick to mitigate this.
+- **Gmail Quotas**: The daily send limit is 500/user. We recommend keeping the default cap of 30 for new accounts to warm up gradually.
 
-- Google Maps Terms of Service (prohibits automated scraping; scale carefully)
-- CAN-SPAM (US): physical address + opt-out required (enforced by template validator)
-- GDPR / e-Privacy (EU): cold email to personal addresses needs legitimate-interest basis
-- CASL (Canada) / Spam Act (AU): opt-in laws — strict mode blocks these by default
+---
 
-The Options page surfaces a one-time acknowledgement modal.
-
-## Repo hygiene
-
-If you see zero-byte files in the repo root with names like `t.id`, `{,`, `set({`, or `State)`, those are accidental shell-redirect artifacts (a stray `>` in a copy-pasted command), not part of the build. Safe to delete.
-
-## Known limitations
-
-- Google Maps DOM changes can break the scraper. Selectors live in `src/content/maps-scraper.ts`. The extractor probes multiple selector variants but you may need to update them after Google ships a layout change.
-- Service workers in MV3 sleep after ~30s of inactivity. The scrape pipeline tolerates this — leads stream in via messages, and the queue runs on a 5-minute `chrome.alarms` tick.
-- Gmail's daily send quota is 500/user; warm up new accounts gradually. Daily cap default of 30 is conservative.
-
-## File map
-
-```
-src/
-  background/        service worker entrypoint, message router
-    audit.ts         site audit (meta, links, headers, SEO, contact)
-    gmail.ts         OAuth + RFC822 + send
-    probe.ts         HEAD probe + permission gating
-    queue.ts         throttled outreach tick
-    storage.ts       Dexie + chrome.storage facade
-    index.ts         dispatcher
-  content/
-    maps-scraper.ts  Google Maps DOM extractor
-    contact-filler.ts contact-form auto-fill (no auto-submit)
-    stealth.ts       jitter + sleep helpers
-  popup/             toolbar UI (React)
-    tabs/            ScrapeTab, LeadsTab, AuditsTab, OutreachTab, SettingsTab
-  options/           full-page Options (templates, opt-outs, API keys)
-  sidepanel/         Chrome side panel UI (React)
-  shared/
-    types.ts         Lead, AuditReport, OutreachItem, Template, Settings
-    messages.ts      typed runtime messaging
-    csv.ts           lead → CSV
-    templates.ts     render + geo gate + CAN-SPAM validator
-    crypto.ts        AES-GCM at-rest helper
-public/icons/        toolbar icons (placeholders; replace as needed)
-manifest.config.ts   MV3 manifest source
-vite.config.ts
-```
+> **Note**: If you notice zero-byte files in the repository root (e.g., `t.id`, `{,`), these are harmless shell-redirect artifacts and can be safely ignored or deleted.
