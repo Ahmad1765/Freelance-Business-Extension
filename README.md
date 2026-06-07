@@ -146,4 +146,4 @@ This tool is designed for **personal use**. Users are responsible for maintainin
 
 ---
 
-> **Note**: If you notice zero-byte files in the repository root (e.g., `t.id`, `{,`), these are harmless shell-redirect artifacts and can be safely ignored or deleted.
+> **Note**: If you notice zero-byte files in the repository root (e.g., `t.id`, `{,`, `set({`, `State)`), these are harmless shell-redirect artifacts and can be safely ignored or deleted.
